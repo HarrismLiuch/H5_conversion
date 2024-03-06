@@ -3,13 +3,13 @@ import sys
 from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QLabel
 
 from PyQt5.QtWidgets import QDesktopWidget
-import os
+from os import makedirs
 import glob
 from PyQt5.QtWidgets import QMessageBox
+import numpy as np
 import h5py
 import hdf5plugin
 import matplotlib.pyplot as plt
-import numpy as np
 from PyQt5.QtWidgets import QFileDialog
 
 class H5_Convert_to_Tiff(QWidget):
@@ -34,10 +34,10 @@ class H5_Convert_to_Tiff(QWidget):
         self.convert_btn.clicked.connect(self.convert)
 
         self.selected_folder_label = QLabel("Selected Folder: ", self)
-        self.selected_folder_label.setGeometry(50, 100, 320, 30)
+        self.selected_folder_label.setGeometry(50, 100, 600, 30)
 
         self.to_folder_label = QLabel("To Folder: ", self)
-        self.to_folder_label.setGeometry(50, 140, 320, 30)
+        self.to_folder_label.setGeometry(50, 140, 600, 30)
         self.center_window()
 
     def center_window(self):
@@ -86,7 +86,7 @@ class H5_Convert_to_Tiff(QWidget):
                         try:
                             plt.imsave(to_folder + "/" + name + '.tif', data, format='tiff', cmap=plt.cm.gray)
                         except:
-                            os.makedirs(to_folder, exist_ok=True)
+                            makedirs(to_folder, exist_ok=True)
                             plt.imsave(to_folder + "/" +name + '.tif', data, format='tiff', cmap=plt.cm.gray)
                 QMessageBox.information(self, "Information", "Conversion completed")
 
