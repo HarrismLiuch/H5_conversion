@@ -31,8 +31,8 @@ class H5_Convert_to_Tiff(QWidget):
         self.to_folder_btn.setGeometry(160, 50, 100, 30)
         self.to_folder_btn.clicked.connect(self.to_folder)
 
-        self.convert_btn = QPushButton("Convert to .tif", self)
-        self.convert_btn.setGeometry(270, 50, 100, 30)
+        self.convert_btn = QPushButton("Convert to .tif/.npy", self)
+        self.convert_btn.setGeometry(270, 50, 170, 30)
         self.convert_btn.clicked.connect(self.convert_tif)
 
         self.selected_folder_label = QLabel("Selected Folder: ", self)
@@ -42,17 +42,17 @@ class H5_Convert_to_Tiff(QWidget):
         self.to_folder_label.setGeometry(50, 140, 600, 30)
 
         self.max_threshold_label = QLabel("Max Threshold %:", self)
-        self.max_threshold_label.setGeometry(400, 50, 100, 30)
+        self.max_threshold_label.setGeometry(500, 0, 150, 30)
 
         self.max_threshold_input = QLineEdit(self)
-        self.max_threshold_input.setGeometry(520, 50, 100, 30)
+        self.max_threshold_input.setGeometry(650, 0, 100, 30)
         self.max_threshold_input.setValidator(QDoubleValidator(0, 100, 2))
 
         self.min_threshold_label = QLabel("Min Threshold %:", self)
-        self.min_threshold_label.setGeometry(400, 100, 100, 30)  
+        self.min_threshold_label.setGeometry(500, 50, 150, 30)  
         
         self.min_threshold_input = QLineEdit(self)
-        self.min_threshold_input.setGeometry(520, 100, 100, 30)
+        self.min_threshold_input.setGeometry(650, 50, 100, 30)
         self.min_threshold_input.setValidator(QDoubleValidator(0, 100, 2))
 
         '''...
