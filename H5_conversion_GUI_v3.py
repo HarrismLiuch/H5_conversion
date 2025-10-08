@@ -21,48 +21,43 @@ class H5_Convert_to_Tiff(QWidget):
 
     def initUI(self):
         self.setWindowTitle("H5 Conversion")
-        self.setGeometry(100, 100, 800, 200)
+        self.setGeometry(100, 100, 1200, 300)
 
         self.select_folder_btn = QPushButton("Select Folder", self)
-        self.select_folder_btn.setGeometry(50, 50, 100, 30)
+        self.select_folder_btn.setGeometry(50, 50, 150, 50)
         self.select_folder_btn.clicked.connect(self.select_folder)
 
         self.to_folder_btn = QPushButton("To Folder", self)
-        self.to_folder_btn.setGeometry(160, 50, 100, 30)
+        self.to_folder_btn.setGeometry(200, 50, 150, 50)
         self.to_folder_btn.clicked.connect(self.to_folder)
 
-    # Button to select a TIFF file
-    self.select_tiff_btn = QPushButton("Select TIFF File", self)
-    self.select_tiff_btn.setGeometry(450, 50, 120, 30)
-    self.select_tiff_btn.clicked.connect(self.select_tiff_file)
-
-        self.convert_btn = QPushButton("Convert to .tif/.npy", self)
-        self.convert_btn.setGeometry(270, 50, 170, 30)
+        self.convert_btn = QPushButton("Convert to .tif/.npy/.tiff", self)
+        self.convert_btn.setGeometry(350, 50, 250, 50)
         self.convert_btn.clicked.connect(self.convert_tif)
 
         self.selected_folder_label = QLabel("Selected Folder: ", self)
-        self.selected_folder_label.setGeometry(50, 100, 600, 30)
+        self.selected_folder_label.setGeometry(50, 100, 600, 50)
 
         self.to_folder_label = QLabel("To Folder: ", self)
-        self.to_folder_label.setGeometry(50, 140, 600, 30)
-
-    # Label to display selected TIFF file
-    self.selected_tiff_label = QLabel("Selected TIFF: ", self)
-    self.selected_tiff_label.setGeometry(450, 100, 600, 30)
+        self.to_folder_label.setGeometry(50, 140, 600, 50)
 
         self.max_threshold_label = QLabel("Max Threshold %:", self)
-        self.max_threshold_label.setGeometry(500, 0, 150, 30)
+        self.max_threshold_label.setGeometry(700, 0, 150, 30)
 
         self.max_threshold_input = QLineEdit(self)
-        self.max_threshold_input.setGeometry(650, 0, 100, 30)
+        self.max_threshold_input.setGeometry(850, 0, 100, 30)
         self.max_threshold_input.setValidator(QDoubleValidator(0, 100, 2))
 
         self.min_threshold_label = QLabel("Min Threshold %:", self)
-        self.min_threshold_label.setGeometry(500, 50, 150, 30)  
+        self.min_threshold_label.setGeometry(700, 50, 150, 30)  
         
         self.min_threshold_input = QLineEdit(self)
-        self.min_threshold_input.setGeometry(650, 50, 100, 30)
+        self.min_threshold_input.setGeometry(850, 50, 100, 30)
         self.min_threshold_input.setValidator(QDoubleValidator(0, 100, 2))
+
+        self.select_flatfield_file_btn = QPushButton("Select Flatfield File", self)
+        self.select_flatfield_file_btn.setGeometry(50, 200, 150, 50)
+        self.select_flatfield_file_btn.clicked.connect(self.select_flatfield_file)
 
         '''...
 
@@ -81,6 +76,22 @@ class H5_Convert_to_Tiff(QWidget):
         center_point = QDesktopWidget().availableGeometry().center()
         frame_geometry.moveCenter(center_point)
         self.move(frame_geometry.topLeft())
+
+    def select_flatfield_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select Flatfield File", "", "Numpy Files (*.npy);;All Files (*)")
+        if file_path:
+            try:
+                self.flatfield = np.load(file_path)
+                if self.flatfield.shape != (512, 512):
+                    QMessageBox.warning(self, "Warning", "Flatfield file must be of shape (512, 512)")
+                    self.flatfield = None
+                else:
+                    QMessageBox.information(self, "Information", f"Flatfield file {file_path} loaded successfully")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Failed to load flatfield file: {e}")
+                self.flatfield = None
+        else:
+            self.flatfield = None
 
     def select_folder(self):
         folder_path = QFileDialog.getExistingDirectory(self, "Select Folder")
