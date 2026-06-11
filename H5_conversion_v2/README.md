@@ -51,7 +51,54 @@ First run will:
 3. Open the GUI.
 
 > Closing the terminal window will quit the GUI. The `.bat` keeps the window
-> open on error so the message stays visible.
+> open at the end so the exit code is always visible, even on success.
+
+**If the window disappears with no output** — this is almost always Windows
+closing the CMD window before the script can print anything. Two fixes,
+pick whichever is more convenient:
+
+1. **Open a CMD window manually and run the launcher there.** This is the
+   fastest way to see the actual error.
+   ```cmd
+   cd C:\path\to\H5_conversion_v2
+   launch_windows.bat
+   ```
+   The window stays attached to the console, so all error messages are
+   visible.
+2. **Run the launcher via `cmd /k`** so the window is forced to stay open
+   even after the script ends:
+   ```cmd
+   cmd /k "C:\path\to\H5_conversion_v2\launch_windows.bat"
+   ```
+
+**Common Windows-side causes of an immediate quit**:
+- `uv` is installed but its directory isn't on the current PATH. The
+  launcher checks `%USERPROFILE%\.local\bin\uv.exe` directly, so this
+  should no longer happen — but if it does, set the PATH manually:
+  ```cmd
+  set PATH=%USERPROFILE%\.local\bin;%PATH%
+  ```
+- A corporate-managed Windows box blocks the PowerShell installer. Run
+  it once by hand:
+  ```powershell
+  irm https://astral.sh/uv/install.ps1 | iex
+  ```
+  then double-click the `.bat` again.
+- The `uv sync` step failed (no internet, antivirus block, locked `.venv`).
+  The launcher now prints the failure reason and pauses, but if your
+  Windows config closes CMD windows on script end you'll need the manual
+  CMD window trick above to see it.
+
+For development from a developer CMD or PowerShell:
+```cmd
+uv sync
+uv run python run.py
+```
+
+**Diagnostic helper**: if you want to see what the launcher sees (where
+`uv` is on disk, whether the `.venv` is built, etc.) run
+`diagnose_windows.bat` from a CMD window. It prints everything and pauses
+at the end.
 
 ## Manual run (for development)
 
