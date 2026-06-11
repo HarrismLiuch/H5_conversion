@@ -89,6 +89,14 @@ pick whichever is more convenient:
   Windows config closes CMD windows on script end you'll need the manual
   CMD window trick above to see it.
 
+**Log file**: every run of `launch_windows.bat` (and `diagnose_windows.bat`)
+appends its full output to a `.log` file in the project folder:
+- `launcher.log` — the launcher's own output
+- `diagnose.log` — the diagnostic's output
+
+So even if the console window closes, you can open these files in Notepad
+to see exactly what happened.
+
 For development from a developer CMD or PowerShell:
 ```cmd
 uv sync
@@ -112,7 +120,10 @@ uv run python run.py
 ```
 H5_conversion_v2/
 ├── launch_mac.sh            # macOS / Linux double-click launcher
-├── launch_windows.bat       # Windows double-click launcher
+├── launch_mac.command       # macOS preferred double-click target
+├── launch_windows.bat       # Windows outer launcher (spawns inner under cmd /k)
+├── launcher_inner.bat       # Windows inner launcher (the real work)
+├── diagnose_windows.bat     # Windows diagnostic tool
 ├── run.py                   # entry point
 ├── pyproject.toml
 ├── src/h5conv/
