@@ -1,0 +1,31 @@
+[project]
+name = "h5conv"
+version = "0.2.0"
+description = "DECTRIS EIGER H5 → TIF/TIFF/NPY converter with a cross-platform GUI"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+authors = [{ name = "Chuhang Liu" }]
+license = { text = "MIT" }
+dependencies = [
+    # GUI
+    "PySide6>=6.7,<7",
+    # Numerics
+    "numpy>=1.26,<3",
+    # H5 I/O — h5py + hdf5plugin covers DECTRIS EIGER bit-shuffle/lz4 blobs
+    "h5py>=3.10",
+    "hdf5plugin>=4.1",
+    # Image I/O
+    "tifffile>=2024.5",
+    "matplotlib>=3.8",
+    "imageio>=2.34",
+]
+
+[project.scripts]
+h5conv-gui = "h5conv.gui:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/h5conv"]

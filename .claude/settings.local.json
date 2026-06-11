@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ' *)",
+      "Bash(mkdir -p /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2/src/h5conv)",
+      "Bash(chmod +x /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2/launch_mac.sh)",
+      "Bash(curl -LsSf https://astral.sh/uv/install.sh)",
+      "Bash(sh)",
+      "Bash(curl -LsSf -o /tmp/uv-installer.tar.gz https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-apple-darwin.tar.gz)",
+      "Bash(tar -xzf /tmp/uv-installer.tar.gz -C /tmp)",
+      "Bash(/tmp/uv-x86_64-apple-darwin/uv --version)",
+      "Bash(xattr -dr com.apple.quarantine /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2/launch_mac.command /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2/launch_mac.sh)",
+      "Read(//Users/chuhang/.local/bin/**)",
+      "Read(//Users/chuhang/.cargo/bin/**)",
+      "Read(//private/tmp/uv-x86_64-apple-darwin/**)",
+      "Read(//Users/chuhang/**)",
+      "Read(//Users/chuhang/.config/fish/**)",
+      "Bash([ -d \"$HOME/bin\" ])",
+      "Bash(chmod +x /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2/launch_mac.sh /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2/launch_mac.command)",
+      "Bash(xattr -dr com.apple.quarantine /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2/launch_mac.sh /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2/launch_mac.command)",
+      "Bash(PATH=\"/usr/bin:/bin:/usr/sbin:/sbin\" timeout 1 ./launch_mac.command)",
+      "Bash(echo \"--- exit: $? ---\")",
+      "Bash(/tmp/uv-x86_64-apple-darwin/uv run *)",
+      "Bash(/tmp/uv-x86_64-apple-darwin/uv --project /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2 run python -c \"from h5conv.gui import MainWindow; print\\('OK: MainWindow imports'\\)\")",
+      "Bash(/tmp/uv-x86_64-apple-darwin/uv --project /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2 run python /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2/smoke_test.py)",
+      "Bash(/tmp/uv-x86_64-apple-darwin/uv --project /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2 run python -c \"from h5conv.gui import MainWindow, COLORMAP_CATEGORIES; print\\('OK'\\); print\\('Categories:', list\\(COLORMAP_CATEGORIES.keys\\(\\)\\)\\); print\\('Sequential count:', len\\(COLORMAP_CATEGORIES['Sequential']\\)\\); print\\('Diverging count:', len\\(COLORMAP_CATEGORIES['Diverging']\\)\\)\")",
+      "Bash(/tmp/uv-x86_64-apple-darwin/uv --project /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2 run python -c ' *)"
+    ]
+  }
+}
