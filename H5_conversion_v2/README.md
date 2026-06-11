@@ -43,70 +43,63 @@ The first run will:
 > `xattr -dr com.apple.quarantine /Users/chuhang/Documents/GitHub/H5_conversion/H5_conversion_v2`
 
 ### Windows
-Double-click `launch_windows.bat`.
+Double-click **`launch_windows.vbs`**.
+
+Why a `.vbs` and not a `.bat`? On managed Windows machines, double-clicking
+a `.bat` file uses the *calling Explorer's* console properties. If "Close
+on exit" is enabled (it often is, on corporate / school machines), the
+console window disappears the moment the script ends — even if it ends
+on a `pause`. A `.vbs` file runs through the Windows Script Host, which
+spawns a *new* `cmd.exe` process that runs the launcher. That new
+process has its own console properties and is not affected by the
+"Close on exit" setting, so the window reliably stays visible.
+
+The VBS launcher calls [launcher_inner.bat](H5_conversion_v2/launcher_inner.bat),
+which does the actual work (locate `uv`, run `uv sync`, launch the GUI).
 
 First run will:
 1. Install `uv` into `%USERPROFILE%\.local\bin` if it is not on `PATH`.
 2. Create the `.venv` and install dependencies.
 3. Open the GUI.
 
-> Closing the terminal window will quit the GUI. The `.bat` keeps the window
-> open at the end so the exit code is always visible, even on success.
+> If double-clicking the `.vbs` does nothing, your antivirus or group
+> policy may block VBScript. In that case, open a CMD window manually
+> and run `launcher_inner.bat` directly — see "If the window
+> disappears" below.
 
-**If the window disappears with no output** — this is almost always Windows
-closing the CMD window before the script can print anything. Two fixes,
-pick whichever is more convenient:
+**Log files**: every run of the launcher appends its full output to
+`launcher.log` in the project folder, and the diagnostic saves to
+`diagnose.log`. So even if the console window does close, you can open
+these files in Notepad to see exactly what happened.
 
-1. **Open a CMD window manually and run the launcher there.** This is the
-   fastest way to see the actual error.
-   ```cmd
-   cd C:\path\to\H5_conversion_v2
-   launch_windows.bat
+**If you see `'uv' is not recognized as an internal or external command`**:
+This means the launcher found the binary path but Windows still can't
+locate it. The most common cause is that the installer's PATH update
+was blocked by group policy, OR the binary is in a non-standard
+location the launcher didn't check. Two fixes:
+
+1. Install `uv` manually from a PowerShell prompt **as Administrator**:
+   ```powershell
+   irm https://astral.sh/uv/install.ps1 | iex
    ```
-   The window stays attached to the console, so all error messages are
-   visible.
-2. **Run the launcher via `cmd /k`** so the window is forced to stay open
-   even after the script ends:
-   ```cmd
-   cmd /k "C:\path\to\H5_conversion_v2\launch_windows.bat"
-   ```
+   The installer drops `uv.exe` at `%USERPROFILE%\.local\bin\uv.exe`,
+   which the launcher checks first.
+2. If `uv` is installed somewhere unusual, run `diagnose_windows.bat`
+   (see below) — it prints the exact path and version.
 
-**Common Windows-side causes of an immediate quit**:
-- `uv` is installed but its directory isn't on the current PATH. The
-  launcher checks `%USERPROFILE%\.local\bin\uv.exe` directly, so this
-  should no longer happen — but if it does, set the PATH manually:
-  ```cmd
-  set PATH=%USERPROFILE%\.local\bin;%PATH%
-  ```
-- A corporate-managed Windows box blocks the PowerShell installer. Run
-  it once by hand:
-  ```powershell
-  irm https://astral.sh/uv/install.ps1 | iex
-  ```
-  then double-click the `.bat` again.
-- The `uv sync` step failed (no internet, antivirus block, locked `.venv`).
-  The launcher now prints the failure reason and pauses, but if your
-  Windows config closes CMD windows on script end you'll need the manual
-  CMD window trick above to see it.
+**If the window disappears with no output** (the original problem):
+Open a CMD window manually and run the launcher there. The window
+stays attached to your console, so all error messages stay visible:
 
-**Log file**: every run of `launch_windows.bat` (and `diagnose_windows.bat`)
-appends its full output to a `.log` file in the project folder:
-- `launcher.log` — the launcher's own output
-- `diagnose.log` — the diagnostic's output
-
-So even if the console window closes, you can open these files in Notepad
-to see exactly what happened.
-
-For development from a developer CMD or PowerShell:
 ```cmd
-uv sync
-uv run python run.py
+cd C:\path\to\H5_conversion_v2
+launcher_inner.bat
 ```
 
-**Diagnostic helper**: if you want to see what the launcher sees (where
-`uv` is on disk, whether the `.venv` is built, etc.) run
-`diagnose_windows.bat` from a CMD window. It prints everything and pauses
-at the end.
+**Diagnostic tool**: `diagnose_windows.bat` prints where `uv` is on
+disk, what `where uv` returns from `PATH`, whether the `.venv` is
+built, and what `.h5` files are in the current directory. Output is
+saved to `diagnose.log` and the window pauses at the end.
 
 ## Manual run (for development)
 
@@ -121,7 +114,7 @@ uv run python run.py
 H5_conversion_v2/
 ├── launch_mac.sh            # macOS / Linux double-click launcher
 ├── launch_mac.command       # macOS preferred double-click target
-├── launch_windows.bat       # Windows outer launcher (spawns inner under cmd /k)
+├── launch_windows.vbs       # Windows preferred double-click target
 ├── launcher_inner.bat       # Windows inner launcher (the real work)
 ├── diagnose_windows.bat     # Windows diagnostic tool
 ├── run.py                   # entry point
