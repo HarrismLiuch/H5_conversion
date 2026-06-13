@@ -9,6 +9,9 @@ double-clicking a single launcher file — no system Python required.
 For every `*master*.h5` in the input folder:
 
 1. Loads the `entry/data/data_000001` dataset (single frame or 3-D stack).
+   The Advanced panel can override both the filename keyword and dataset key;
+   if the key is missing, the converter falls back to the first dataset under
+   `entry/data`.
 2. **Optionally multiplies by a flatfield** (a 512×512 `.npy` / `.tif` you
    supply). This is the only whole-image correction; there is no
    hardcoded crosshair division any more.
@@ -20,6 +23,8 @@ For every `*master*.h5` in the input folder:
    - `.tiff` — raw `float32` TIFF archive
    - `.tif` — 8-bit, percentile-clipped, colormapped display image
 5. Auto-detects 3-D stacks and saves one output set per frame.
+6. Overwrites existing outputs by default, or skips already-existing selected
+   outputs when **Overwrite existing outputs** is unchecked.
 
 ## Running
 
@@ -54,7 +59,7 @@ spawns a *new* `cmd.exe` process that runs the launcher. That new
 process has its own console properties and is not affected by the
 "Close on exit" setting, so the window reliably stays visible.
 
-The VBS launcher calls [launcher_inner.bat](H5_conversion_v2/launcher_inner.bat),
+The VBS launcher calls [launcher_inner.bat](launcher_inner.bat),
 which does the actual work (locate `uv`, run `uv sync`, launch the GUI).
 
 First run will:
@@ -72,20 +77,27 @@ First run will:
 `diagnose.log`. So even if the console window does close, you can open
 these files in Notepad to see exactly what happened.
 
-**If you see `'uv' is not recognized as an internal or external command`**:
-This means the launcher found the binary path but Windows still can't
-locate it. The most common cause is that the installer's PATH update
-was blocked by group policy, OR the binary is in a non-standard
-location the launcher didn't check. Two fixes:
+**If you see `uv candidate not found`** (or any "uv not found" error):
+The launcher searches the standard install paths and the current `PATH`
+for `uv.exe`, and if it can't find one, downloads the standalone
+binary directly from the [uv GitHub releases](https://github.com/astral-sh/uv/releases)
+page (no PowerShell installer, no group-policy surprises). If the
+download itself fails (corporate firewall blocking GitHub, no internet,
+no `curl` and no PowerShell), the launcher prints a clear error and
+pauses — and the full log is in `launcher.log`.
 
-1. Install `uv` manually from a PowerShell prompt **as Administrator**:
+Two manual fallbacks if even the direct download doesn't work:
+
+1. **Install `uv` manually from a PowerShell prompt**:
    ```powershell
    irm https://astral.sh/uv/install.ps1 | iex
    ```
    The installer drops `uv.exe` at `%USERPROFILE%\.local\bin\uv.exe`,
    which the launcher checks first.
-2. If `uv` is installed somewhere unusual, run `diagnose_windows.bat`
-   (see below) — it prints the exact path and version.
+2. **Tell the launcher where uv is** by setting an environment variable
+   `H5CONV_UV_EXE` to the full path (e.g. `C:\tools\uv\uv.exe`) via
+   *System Properties → Environment Variables*. Re-open the CMD window
+   and re-run `launch_windows.vbs`.
 
 **If the window disappears with no output** (the original problem):
 Open a CMD window manually and run the launcher there. The window

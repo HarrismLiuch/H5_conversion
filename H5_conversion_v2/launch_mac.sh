@@ -8,6 +8,7 @@
 
 set -e
 cd "$(dirname "$0")"
+export MPLCONFIGDIR="${MPLCONFIGDIR:-${TMPDIR:-/tmp}/h5conv-matplotlib}"
 
 # 1. Make sure `uv` is on PATH. The installer appends to ~/.zshrc / fish,
 #    but those files may be root-owned and unwritable. We instead source

@@ -7,13 +7,14 @@ on macOS and Windows.
 
 from __future__ import annotations
 
+import os
 import sys
 import traceback
 from pathlib import Path
 
 import numpy as np
 from PySide6.QtCore import QObject, QThread, Signal
-from PySide6.QtGui import QDoubleValidator, QImage, QPixmap
+from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -39,9 +40,15 @@ from h5conv.core import (
     ConvertConfig,
     ConvertStats,
     DEFAULT_DEAD_PIXELS,
-    DETECTOR_SHAPE,
+    DEFAULT_DATASET_KEY,
     convert_directory,
     load_flatfield,
+    parse_dead_pixels,
+)
+
+
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(os.getenv("TMPDIR", "/tmp")) / "h5conv-mpl")
 )
 
 
@@ -132,15 +139,21 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("H5 Conversion")
-        self.resize(760, 640)
+        self.resize(980, 700)
 
         self._flatfield: np.ndarray | None = None
         self._thread: QThread | None = None
         self._worker: _ConversionWorker | None = None
+        self._running = False
+        self._config_widgets: list[QWidget] = []
 
         self._build_ui()
 
     # ----- UI construction ------------------------------------------------
+
+    def _tracked(self, widget):
+        self._config_widgets.append(widget)
+        return widget
 
     def _build_ui(self) -> None:
         central = QWidget(self)
@@ -149,33 +162,47 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        root.addWidget(self._build_io_group())
-        root.addWidget(self._build_options_group())
-        root.addWidget(self._build_actions_group())
-        root.addWidget(self._build_log_group(), stretch=1)
+        columns = QHBoxLayout()
+        columns.setSpacing(12)
+
+        left = QVBoxLayout()
+        left.setSpacing(10)
+        left.addWidget(self._build_io_group())
+        left.addWidget(self._build_options_group())
+        left.addStretch(1)
+
+        right = QVBoxLayout()
+        right.setSpacing(10)
+        right.addWidget(self._build_advanced_group())
+        right.addWidget(self._build_actions_group())
+        right.addWidget(self._build_log_group(), stretch=1)
+
+        columns.addLayout(left, stretch=3)
+        columns.addLayout(right, stretch=2)
+        root.addLayout(columns, stretch=1)
 
     def _build_io_group(self) -> QGroupBox:
         box = QGroupBox("Input / Output")
         grid = QGridLayout(box)
         grid.setColumnStretch(1, 1)
 
-        self.input_edit = QLineEdit()
+        self.input_edit = self._tracked(QLineEdit())
         self.input_edit.setPlaceholderText("Folder containing *.h5 master files")
-        input_btn = QPushButton("Browse…")
+        input_btn = self._tracked(QPushButton("Browse..."))
         input_btn.clicked.connect(self._pick_input)
 
-        self.output_edit = QLineEdit()
+        self.output_edit = self._tracked(QLineEdit())
         self.output_edit.setPlaceholderText("Folder to write .npy / .tiff / .tif")
-        output_btn = QPushButton("Browse…")
+        output_btn = self._tracked(QPushButton("Browse..."))
         output_btn.clicked.connect(self._pick_output)
 
-        self.flatfield_edit = QLineEdit()
+        self.flatfield_edit = self._tracked(QLineEdit())
         self.flatfield_edit.setPlaceholderText(
-            "Optional: 512×512 flatfield .npy / .tif"
+            "Optional: 512x512 flatfield .npy / .tif"
         )
-        ff_browse = QPushButton("Browse…")
+        ff_browse = self._tracked(QPushButton("Browse..."))
         ff_browse.clicked.connect(self._pick_flatfield)
-        ff_clear = QPushButton("Clear")
+        ff_clear = self._tracked(QPushButton("Clear"))
         ff_clear.clicked.connect(self._clear_flatfield)
 
         ff_row = QHBoxLayout()
@@ -198,33 +225,33 @@ class MainWindow(QMainWindow):
         form = QFormLayout(box)
         form.setLabelAlignment(form.labelAlignment())
 
-        self.apply_ff_check = QCheckBox("Apply flatfield (multiply)")
+        self.apply_ff_check = self._tracked(QCheckBox("Apply flatfield (multiply)"))
         self.apply_ff_check.setChecked(False)
         self.apply_ff_check.toggled.connect(self._refresh_apply_ff_state)
 
-        self.fix_dead_check = QCheckBox("Fix known dead pixels")
+        self.fix_dead_check = self._tracked(QCheckBox("Fix known dead pixels"))
         self.fix_dead_check.setChecked(True)
 
-        self.min_pct = QDoubleSpinBox()
+        self.min_pct = self._tracked(QDoubleSpinBox())
         self.min_pct.setRange(0.0, 100.0)
         self.min_pct.setDecimals(2)
         self.min_pct.setValue(1.0)
         self.min_pct.setSingleStep(0.1)
 
-        self.max_pct = QDoubleSpinBox()
+        self.max_pct = self._tracked(QDoubleSpinBox())
         self.max_pct.setRange(0.0, 100.0)
         self.max_pct.setDecimals(2)
         self.max_pct.setValue(99.0)
         self.max_pct.setSingleStep(0.1)
 
-        self.save_npy = QCheckBox(".npy  (raw float32)")
+        self.save_npy = self._tracked(QCheckBox(".npy raw float32"))
         self.save_npy.setChecked(True)
-        self.save_tiff = QCheckBox(".tiff (raw float32)")
+        self.save_tiff = self._tracked(QCheckBox(".tiff raw float32"))
         self.save_tiff.setChecked(True)
-        self.save_tif = QCheckBox(".tif  (8-bit display, percentile-clipped)")
+        self.save_tif = self._tracked(QCheckBox(".tif display image"))
         self.save_tif.setChecked(True)
 
-        self.cmap_category = QComboBox()
+        self.cmap_category = self._tracked(QComboBox())
         # Categories must match the keys in COLORMAP_CATEGORIES below.
         self.cmap_category.addItems(list(COLORMAP_CATEGORIES.keys()))
         self.cmap_category.setCurrentText("Sequential")
@@ -239,7 +266,7 @@ class MainWindow(QMainWindow):
         )
         self.cmap_swatch_small.setScaledContents(True)
 
-        self.cmap_combo = QComboBox()
+        self.cmap_combo = self._tracked(QComboBox())
         self._populate_cmap_combo("Sequential", default="gray")
         cmap_row = QHBoxLayout()
         cmap_row.setContentsMargins(0, 0, 0, 0)
@@ -250,19 +277,19 @@ class MainWindow(QMainWindow):
         cmap_row_holder = QWidget()
         cmap_row_holder.setLayout(cmap_row)
 
-        # 2-row grid for the output toggles
-        save_box = QHBoxLayout()
-        save_box.addWidget(self.save_npy)
-        save_box.addWidget(self.save_tiff)
-        save_box.addWidget(self.save_tif)
+        save_box = QGridLayout()
+        save_box.setContentsMargins(0, 0, 0, 0)
+        save_box.addWidget(self.save_npy, 0, 0)
+        save_box.addWidget(self.save_tiff, 0, 1)
+        save_box.addWidget(self.save_tif, 1, 0, 1, 2)
         save_holder = QWidget()
         save_holder.setLayout(save_box)
 
         # Dead-pixel positions, in case the user wants to override
-        self.dead_pixels_edit = QLineEdit(
-            ", ".join(f"{r},{c}" for r, c in DEFAULT_DEAD_PIXELS)
+        self.dead_pixels_edit = self._tracked(
+            QLineEdit("; ".join(f"{r},{c}" for r, c in DEFAULT_DEAD_PIXELS))
         )
-        self.dead_pixels_edit.setPlaceholderText("row,col pairs e.g. 164,87 ; 192,85")
+        self.dead_pixels_edit.setPlaceholderText("row,col pairs e.g. 164,87; 192,85")
 
         form.addRow("", self.apply_ff_check)
         form.addRow("", self.fix_dead_check)
@@ -282,6 +309,24 @@ class MainWindow(QMainWindow):
         self._refresh_cmap_swatches(self.cmap_combo.currentText())
 
         self._refresh_apply_ff_state()
+        return box
+
+    def _build_advanced_group(self) -> QGroupBox:
+        box = QGroupBox("Advanced")
+        form = QFormLayout(box)
+
+        self.file_keyword_edit = self._tracked(QLineEdit("master"))
+        self.file_keyword_edit.setPlaceholderText("Empty converts every .h5 file")
+
+        self.dataset_key_edit = self._tracked(QLineEdit(DEFAULT_DATASET_KEY))
+        self.dataset_key_edit.setPlaceholderText("Fallback uses first dataset under entry/data")
+
+        self.overwrite_check = self._tracked(QCheckBox("Overwrite existing outputs"))
+        self.overwrite_check.setChecked(True)
+
+        form.addRow("File keyword:", self.file_keyword_edit)
+        form.addRow("Dataset key:", self.dataset_key_edit)
+        form.addRow("", self.overwrite_check)
         return box
 
     def _build_actions_group(self) -> QGroupBox:
@@ -325,13 +370,17 @@ class MainWindow(QMainWindow):
     # ----- State helpers --------------------------------------------------
 
     def _refresh_apply_ff_state(self) -> None:
-        self.apply_ff_check.setEnabled(self._flatfield is not None)
+        self.apply_ff_check.setEnabled(
+            self._flatfield is not None and not self._running
+        )
         if self._flatfield is None:
             self.apply_ff_check.setChecked(False)
-            self.apply_ff_check.setText("Apply flatfield (multiply) — load a flatfield first")
+            self.apply_ff_check.setText(
+                "Apply flatfield (multiply) - load a flatfield first"
+            )
         else:
             self.apply_ff_check.setText(
-                f"Apply flatfield (multiply) — shape {self._flatfield.shape}"
+                f"Apply flatfield (multiply) - shape {self._flatfield.shape}"
             )
 
     def _build_cmap_pixmap(self, name: str, width: int, height: int) -> QPixmap | None:
@@ -435,6 +484,10 @@ class MainWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Flatfield error", str(exc))
             self._flatfield = None
+            self.flatfield_edit.clear()
+        else:
+            self.flatfield_edit.setText(path)
+            self.apply_ff_check.setChecked(True)
         self._refresh_apply_ff_state()
 
     def _clear_flatfield(self) -> None:
@@ -445,29 +498,17 @@ class MainWindow(QMainWindow):
     # ----- Conversion lifecycle ------------------------------------------
 
     def _parse_dead_pixels(self) -> tuple[tuple[int, int], ...]:
-        text = self.dead_pixels_edit.text().strip()
-        if not text:
-            return DEFAULT_DEAD_PIXELS
-        out: list[tuple[int, int]] = []
-        for token in text.replace(";", ",").split(","):
-            token = token.strip()
-            if not token:
-                continue
-            parts = token.split()
-            if len(parts) != 1 and "," in token:
-                parts = token.split(",")
-            if len(parts) != 2:
-                raise ValueError(f"Bad dead-pixel token: {token!r}")
-            out.append((int(parts[0]), int(parts[1])))
-        return tuple(out)
+        return parse_dead_pixels(self.dead_pixels_edit.text())
 
     def _validate(self) -> ConvertConfig | None:
-        in_dir = Path(self.input_edit.text().strip())
-        out_dir = Path(self.output_edit.text().strip())
+        input_text = self.input_edit.text().strip()
+        output_text = self.output_edit.text().strip()
+        in_dir = Path(input_text)
+        out_dir = Path(output_text)
         if not in_dir.is_dir():
             QMessageBox.warning(self, "Input folder", "Please choose a valid input folder.")
             return None
-        if not out_dir:
+        if not output_text:
             QMessageBox.warning(self, "Output folder", "Please choose an output folder.")
             return None
         if self.min_pct.value() >= self.max_pct.value():
@@ -478,6 +519,8 @@ class MainWindow(QMainWindow):
         if not (self.save_npy.isChecked() or self.save_tiff.isChecked() or self.save_tif.isChecked()):
             QMessageBox.warning(self, "Outputs", "Select at least one save format.")
             return None
+        file_keyword = self.file_keyword_edit.text().strip()
+        dataset_key = self.dataset_key_edit.text().strip() or DEFAULT_DATASET_KEY
         try:
             dead = self._parse_dead_pixels()
         except ValueError as exc:
@@ -500,6 +543,9 @@ class MainWindow(QMainWindow):
             cmap=self.cmap_combo.currentText(),
             min_percentile=self.min_pct.value(),
             max_percentile=self.max_pct.value(),
+            dataset_key=dataset_key,
+            file_keyword=file_keyword,
+            overwrite_existing=self.overwrite_check.isChecked(),
         )
 
     def _start_conversion(self) -> None:
@@ -510,7 +556,11 @@ class MainWindow(QMainWindow):
             return  # already running
 
         self.log.clear()
-        self._log(f"Output → {config.output_dir}")
+        self._log(f"Output -> {config.output_dir}")
+        self._log(
+            f"Input: {config.input_dir} | keyword: {config.file_keyword or '(all .h5)'}"
+        )
+        self._log(f"Dataset key: {config.dataset_key}")
         if config.flatfield is not None:
             self._log(f"Flatfield applied: shape {config.flatfield.shape}")
         else:
@@ -521,6 +571,7 @@ class MainWindow(QMainWindow):
             f"{'tiff ' if config.save_tiff else ''}"
             f"{'tif' if config.save_tif else ''}".strip()
         )
+        self._log(f"Overwrite existing: {'yes' if config.overwrite_existing else 'no'}")
 
         self._set_running(True)
 
@@ -541,14 +592,14 @@ class MainWindow(QMainWindow):
     def _cancel_conversion(self) -> None:
         if self._worker is not None:
             self._worker.cancel()
-            self._log("Cancellation requested…")
+            self._log("Cancellation requested...")
             self.cancel_btn.setEnabled(False)
 
     def _on_progress(self, completed: int, total: int, message: str) -> None:
-        if total > 1:
+        if total > 0:
             self.progress.setRange(0, total)
             self.progress.setValue(completed)
-            self.progress.setFormat(f"%v / %m frames  —  {message}")
+            self.progress.setFormat(f"%v / %m frames - {message}")
         else:
             # No file count could be pre-scanned; fall back to a static label.
             self.progress.setRange(0, 1)
@@ -559,14 +610,12 @@ class MainWindow(QMainWindow):
 
     def _on_finished(self, stats: ConvertStats) -> None:
         self._set_running(False)
+        self._show_final_progress(stats)
         if stats.cancelled:
-            self._log("Cancelled by user.")
+            self._log(self._format_summary(stats, "Cancelled"))
             self.status_label.setText("Cancelled.")
         else:
-            self._log(
-                f"Done. Files: {stats.files_done}/{stats.files_total}, "
-                f"frames written: {stats.frames_done}."
-            )
+            self._log(self._format_summary(stats, "Done"))
             self.status_label.setText("Done.")
             for err in stats.errors:
                 self._log(f"ERROR: {err}")
@@ -575,6 +624,12 @@ class MainWindow(QMainWindow):
                     self,
                     "Conversion finished with errors",
                     "\n".join(stats.errors) or "Unknown error",
+                )
+            elif stats.files_total == 0:
+                QMessageBox.information(
+                    self,
+                    "Conversion",
+                    "No matching .h5 files were found.",
                 )
             else:
                 QMessageBox.information(self, "Conversion", "All files converted.")
@@ -592,22 +647,42 @@ class MainWindow(QMainWindow):
             self._worker.deleteLater()
         self._thread = None
         self._worker = None
-        self.progress.setRange(0, 1)
-        self.progress.setValue(0)
-        self.progress.setFormat("Idle")
 
     def _set_running(self, running: bool) -> None:
+        self._running = running
         self.convert_btn.setEnabled(not running)
         self.cancel_btn.setEnabled(running)
-        for w in (self.input_edit, self.output_edit, self.flatfield_edit):
+        for w in self._config_widgets:
             w.setEnabled(not running)
+        self._refresh_apply_ff_state()
         if running:
-            # Use a small "pulse" range that we tick to 1 then 0 on the
-            # first real progress event. The bar stays still until then.
             self.progress.setRange(0, 1)
             self.progress.setValue(0)
-            self.progress.setFormat("Starting…")
-            self.status_label.setText("Running…")
+            self.progress.setFormat("Starting...")
+            self.status_label.setText("Running...")
+
+    def _show_final_progress(self, stats: ConvertStats) -> None:
+        total = stats.frames_done + stats.frames_skipped
+        if stats.files_total == 0:
+            self.progress.setRange(0, 1)
+            self.progress.setValue(0)
+            self.progress.setFormat("No matching files")
+            return
+        self.progress.setRange(0, max(total, 1))
+        self.progress.setValue(total)
+        if stats.cancelled:
+            self.progress.setFormat(f"Cancelled - {total} frames handled")
+        else:
+            self.progress.setFormat(f"Done - {total} frames handled")
+
+    def _format_summary(self, stats: ConvertStats, label: str) -> str:
+        return (
+            f"{label}. Files: {stats.files_done}/{stats.files_total}; "
+            f"frames written: {stats.frames_done}; "
+            f"frames skipped: {stats.frames_skipped}; "
+            f"outputs written: {stats.outputs_written}; "
+            f"outputs skipped: {stats.outputs_skipped}."
+        )
 
     # ----- Shutdown -------------------------------------------------------
 

@@ -16,7 +16,23 @@ echo [PATH directories]
 echo %PATH%
 echo.
 echo [Looking for uv.exe]
-for %%P in ("%USERPROFILE%\.local\bin\uv.exe", "%LOCALAPPDATA%\uv\uv.exe") do (
+echo H5CONV_UV_EXE=%H5CONV_UV_EXE%
+if defined H5CONV_UV_EXE (
+    if exist "%H5CONV_UV_EXE%" (
+        echo FOUND override: %H5CONV_UV_EXE%
+        "%H5CONV_UV_EXE%" --version
+    ) else (
+        echo Override path does not exist: %H5CONV_UV_EXE%
+    )
+)
+for %%P in (
+    "%USERPROFILE%\.local\bin\uv.exe"
+    "%LOCALAPPDATA%\uv\uv.exe"
+    "C:\Program Files\uv\uv.exe"
+    "C:\Program Files (x86)\uv\uv.exe"
+    "C:\ProgramData\chocolatey\bin\uv.exe"
+    "C:\tools\uv\uv.exe"
+) do (
     if exist "%%~P" (
         echo FOUND: %%~P
         "%%~P" --version
@@ -36,7 +52,7 @@ echo [Project venv]
 if exist ".venv\Scripts\python.exe" (
     echo .venv exists: .venv\Scripts\python.exe
 ) else (
-    echo .venv is missing - run launch_windows.bat to create it.
+    echo .venv is missing - run launch_windows.vbs to create it.
 )
 echo.
 echo [Project lockfile]
@@ -44,6 +60,13 @@ if exist "uv.lock" (
     echo uv.lock is present
 ) else (
     echo uv.lock is missing
+)
+echo.
+echo [Matplotlib cache]
+if defined MPLCONFIGDIR (
+    echo MPLCONFIGDIR=%MPLCONFIGDIR%
+) else (
+    echo Launcher default: %TEMP%\h5conv-matplotlib
 )
 echo.
 echo [H5 data files in current directory]
@@ -59,4 +82,3 @@ echo A copy of this output was saved to: %LOGFILE%
 echo.
 echo Press any key to close this window...
 pause >nul
-

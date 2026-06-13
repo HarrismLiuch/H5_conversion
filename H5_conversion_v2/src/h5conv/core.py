@@ -11,10 +11,11 @@ small Protocols so the GUI layer can hook in without polluting the engine.
 
 from __future__ import annotations
 
-import glob
+import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Protocol
+from typing import Iterable, Protocol
 
 import h5py
 import hdf5plugin  # noqa: F401  -- registers EIGER bit-shuffle/LZ4 filters
@@ -33,6 +34,12 @@ DEFAULT_DEAD_PIXELS: tuple[tuple[int, int], ...] = ((164, 87), (192, 85))
 
 # DECTRIS EIGER writes the master file's first frame under this key.
 DEFAULT_DATASET_KEY = "entry/data/data_000001"
+
+# Keep matplotlib's font/cache writes out of unwritable home folders. The
+# launchers set this too, but core can also be used directly from tests/CLI.
+os.environ.setdefault(
+    "MPLCONFIGDIR", str(Path(os.getenv("TMPDIR", "/tmp")) / "h5conv-mpl")
+)
 
 
 # ---------------------------------------------------------------------------
@@ -72,6 +79,7 @@ class ConvertConfig:
     max_percentile: float = 99.0
     dataset_key: str = DEFAULT_DATASET_KEY
     file_keyword: str = "master"  # only convert files whose name contains this
+    overwrite_existing: bool = True
 
 
 @dataclass
@@ -79,6 +87,9 @@ class ConvertStats:
     files_total: int = 0
     files_done: int = 0
     frames_done: int = 0
+    frames_skipped: int = 0
+    outputs_written: int = 0
+    outputs_skipped: int = 0
     cancelled: bool = False
     errors: list[str] = field(default_factory=list)
 
@@ -90,7 +101,32 @@ class ConvertStats:
 
 def discover_h5_files(input_dir: Path, keyword: str) -> list[Path]:
     """Return `.h5` files in `input_dir` whose stem contains `keyword`."""
-    return sorted(p for p in input_dir.glob("*.h5") if keyword in p.stem)
+    keyword = keyword.strip()
+    return sorted(
+        p for p in input_dir.glob("*.h5") if not keyword or keyword in p.stem
+    )
+
+
+def parse_dead_pixels(text: str) -> tuple[tuple[int, int], ...]:
+    """Parse editable dead-pixel text into ``(row, col)`` pairs.
+
+    Accepted examples:
+    - ``164,87; 192,85``
+    - ``164,87 192,85``
+    - one pair per line
+    """
+    if not text.strip():
+        return DEFAULT_DEAD_PIXELS
+
+    pairs = re.findall(r"(-?\d+)\s*,\s*(-?\d+)", text)
+    leftover = re.sub(r"-?\d+\s*,\s*-?\d+", "", text)
+    leftover = re.sub(r"[\s;,]+", "", leftover)
+    if leftover or not pairs:
+        raise ValueError(
+            "Dead pixels must be row,col pairs such as: 164,87; 192,85"
+        )
+
+    return tuple((int(row), int(col)) for row, col in pairs)
 
 
 def load_flatfield(path: Path) -> np.ndarray:
@@ -113,32 +149,51 @@ def load_flatfield(path: Path) -> np.ndarray:
     return arr
 
 
-def _read_frame(f: h5py.File, key: str) -> np.ndarray:
-    """Read one frame. The EIGER layout is usually (1, 512, 512); squeeze to 2-D."""
-    if key not in f:
-        # Fall back to the first dataset under entry/data
-        try:
-            entries = sorted(f["entry/data"].keys())
-            if not entries:
-                raise KeyError(key)
-            key = f"entry/data/{entries[0]}"
-        except KeyError as exc:
-            raise KeyError(f"No dataset matching {key!r} and none under entry/data") from exc
-    raw = np.asarray(f[key])
-    if raw.ndim == 3 and raw.shape[0] == 1:
-        raw = raw[0]
-    if raw.ndim != 2 or raw.shape != DETECTOR_SHAPE:
-        raise ValueError(
-            f"Unexpected frame shape {raw.shape}; expected {DETECTOR_SHAPE}"
-        )
-    return raw
+def _resolve_dataset(f: h5py.File, key: str) -> h5py.Dataset:
+    """Return the requested dataset or the first dataset under ``entry/data``."""
+    if key in f:
+        obj = f[key]
+        if isinstance(obj, h5py.Dataset):
+            return obj
+        raise ValueError(f"{key!r} is not a dataset")
+
+    try:
+        group = f["entry/data"]
+    except KeyError as exc:
+        raise KeyError(f"No dataset matching {key!r} and no entry/data group") from exc
+
+    datasets = [
+        name for name in sorted(group.keys()) if isinstance(group[name], h5py.Dataset)
+    ]
+    if not datasets:
+        raise KeyError(f"No dataset matching {key!r} and none under entry/data")
+    return group[datasets[0]]
+
+
+def _dataset_frame_count(dataset: h5py.Dataset, h5_name: str) -> int:
+    """Validate a detector dataset and return its frame count."""
+    shape = dataset.shape
+    if len(shape) == 2 and shape == DETECTOR_SHAPE:
+        return 1
+    if len(shape) == 3 and shape[1:] == DETECTOR_SHAPE:
+        return int(shape[0])
+    raise ValueError(f"Unexpected dataset shape {shape} in {h5_name}")
+
+
+def _read_dataset_frame(dataset: h5py.Dataset, frame_idx: int) -> np.ndarray:
+    """Read one detector frame as float32 without loading the full stack."""
+    if dataset.ndim == 2:
+        frame = dataset[()]
+    else:
+        frame = dataset[frame_idx, :, :]
+    return np.asarray(frame, dtype=np.float32)
 
 
 def _fix_dead_pixels(frame: np.ndarray, positions: Iterable[tuple[int, int]]) -> None:
     """In-place 4-neighbor replacement for known dead pixels."""
     h, w = frame.shape
     for r, c in positions:
-        if not (0 <= r < h and 0 <= c < w):
+        if not (0 < r < h - 1 and 0 < c < w - 1):
             continue
         frame[r, c] = (
             frame[r - 1, c] + frame[r + 1, c] + frame[r, c - 1] + frame[r, c + 1]
@@ -148,9 +203,8 @@ def _fix_dead_pixels(frame: np.ndarray, positions: Iterable[tuple[int, int]]) ->
 def _apply_flatfield(frame: np.ndarray, flatfield: np.ndarray | None) -> np.ndarray:
     """Multiply by flatfield (user-chosen convention from the v3 Quadro notebooks)."""
     if flatfield is None:
-        return frame
-    out = frame.astype(np.float32, copy=False) * flatfield
-    return out.astype(np.float32)
+        return frame.astype(np.float32, copy=False)
+    return (frame.astype(np.float32, copy=False) * flatfield).astype(np.float32)
 
 
 def _percentile_clip(
@@ -174,13 +228,66 @@ def _percentile_clip(
 
 def _apply_cmap(frame_u8: np.ndarray, cmap: str) -> np.ndarray:
     """Map a (H, W) uint8 array through a matplotlib colormap → (H, W, 4) uint8."""
-    import matplotlib.cm as cm
-    import matplotlib.pyplot as plt
+    import matplotlib as mpl
 
-    cmap_obj = cm.get_cmap(cmap) if cmap in plt.colormaps() else cm.get_cmap("gray")
+    try:
+        cmap_obj = mpl.colormaps[cmap]
+    except (KeyError, ValueError):
+        cmap_obj = mpl.colormaps["gray"]
     rgba = cmap_obj(frame_u8 / 255.0)
     # Drop alpha for TIFF compatibility
     return (rgba[..., :3] * 255.0).astype(np.uint8)
+
+
+def _frame_output_paths(config: ConvertConfig, out_stem: str) -> list[tuple[str, Path]]:
+    paths: list[tuple[str, Path]] = []
+    if config.save_npy:
+        paths.append(("npy", config.output_dir / f"{out_stem}.npy"))
+    if config.save_tiff:
+        paths.append(("tiff", config.output_dir / f"{out_stem}.tiff"))
+    if config.save_tif:
+        paths.append(("tif", config.output_dir / f"{out_stem}.tif"))
+    return paths
+
+
+def _write_frame_outputs(
+    config: ConvertConfig,
+    out_stem: str,
+    processed: np.ndarray,
+) -> tuple[int, int]:
+    """Write selected outputs for one frame and return ``(written, skipped)``."""
+    written = 0
+    skipped = 0
+
+    if config.save_npy:
+        path = config.output_dir / f"{out_stem}.npy"
+        if config.overwrite_existing or not path.exists():
+            np.save(path, processed)
+            written += 1
+        else:
+            skipped += 1
+
+    if config.save_tiff:
+        path = config.output_dir / f"{out_stem}.tiff"
+        if config.overwrite_existing or not path.exists():
+            tifffile.imwrite(path, processed.astype(np.float32, copy=False))
+            written += 1
+        else:
+            skipped += 1
+
+    if config.save_tif:
+        path = config.output_dir / f"{out_stem}.tif"
+        if config.overwrite_existing or not path.exists():
+            u8 = _percentile_clip(
+                processed, config.min_percentile, config.max_percentile
+            )
+            rgb = _apply_cmap(u8, config.cmap)
+            tifffile.imwrite(path, rgb)
+            written += 1
+        else:
+            skipped += 1
+
+    return written, skipped
 
 
 # ---------------------------------------------------------------------------
@@ -213,26 +320,13 @@ def convert_directory(
             f"Flatfield shape {config.flatfield.shape} != {DETECTOR_SHAPE}"
         )
 
-    # Pre-scan: open each file once to learn its frame count, so the UI can
-    # show a real percentage instead of an indeterminate "marquee" bar.
+    # Pre-scan with metadata only, so the UI can show a real percentage.
     file_frame_counts: list[int] = []
     for h5_path in files:
         try:
             with h5py.File(h5_path, "r") as f:
-                try:
-                    raw = np.asarray(f[config.dataset_key])
-                except KeyError:
-                    raw = np.asarray(
-                        f[f"entry/data/{sorted(f['entry/data'].keys())[0]}"]
-                    )
-                if raw.ndim == 2:
-                    file_frame_counts.append(1)
-                elif raw.ndim == 3 and raw.shape[1:] == DETECTOR_SHAPE:
-                    file_frame_counts.append(raw.shape[0])
-                else:
-                    raise ValueError(
-                        f"Unexpected dataset shape {raw.shape} in {h5_path.name}"
-                    )
+                dataset = _resolve_dataset(f, config.dataset_key)
+                file_frame_counts.append(_dataset_frame_count(dataset, h5_path.name))
         except Exception as exc:  # noqa: BLE001
             stats.errors.append(f"{h5_path.name}: {exc}")
             file_frame_counts.append(0)
@@ -250,25 +344,18 @@ def convert_directory(
             continue
 
         try:
+            file_completed = False
             with h5py.File(h5_path, "r") as f:
-                try:
-                    raw = np.asarray(f[config.dataset_key])
-                except KeyError:
-                    raw = np.asarray(f[f"entry/data/{sorted(f['entry/data'].keys())[0]}"])
-
-                if raw.ndim == 2:
-                    frames = [raw]
-                else:
-                    frames = [raw[i] for i in range(raw.shape[0])]
-
-                total = len(frames)
+                dataset = _resolve_dataset(f, config.dataset_key)
+                total = file_frame_counts[file_idx]
                 stem = h5_path.stem  # e.g. '30cm_001_master'
 
-                for frame_idx, frame in enumerate(frames):
+                for frame_idx in range(total):
                     if is_cancelled and is_cancelled():
                         stats.cancelled = True
                         break
 
+                    frame = _read_dataset_frame(dataset, frame_idx)
                     processed = _apply_flatfield(frame, config.flatfield)
                     if config.fix_dead_pixels:
                         _fix_dead_pixels(processed, config.dead_pixels)
@@ -280,28 +367,39 @@ def convert_directory(
                         out_stem = f"{stem}_{frame_idx:04d}"
                         msg = f"{h5_path.name}  frame {frame_idx + 1}/{total}"
 
-                    if config.save_npy:
-                        np.save(config.output_dir / f"{out_stem}.npy", processed)
-                    if config.save_tiff:
-                        tifffile.imwrite(
-                            config.output_dir / f"{out_stem}.tiff", processed
-                        )
-                    if config.save_tif:
-                        u8 = _percentile_clip(
-                            processed, config.min_percentile, config.max_percentile
-                        )
-                        rgb = _apply_cmap(u8, config.cmap)
-                        tifffile.imwrite(
-                            config.output_dir / f"{out_stem}.tif", rgb
-                        )
+                    output_paths = _frame_output_paths(config, out_stem)
+                    if (
+                        not config.overwrite_existing
+                        and output_paths
+                        and all(path.exists() for _, path in output_paths)
+                    ):
+                        stats.frames_skipped += 1
+                        stats.outputs_skipped += len(output_paths)
+                        completed_frames += 1
+                        if progress:
+                            progress(
+                                completed_frames,
+                                total_frames,
+                                f"Skipped existing: {msg}",
+                            )
+                        continue
 
-                    stats.frames_done += 1
+                    written, skipped = _write_frame_outputs(config, out_stem, processed)
+                    stats.outputs_written += written
+                    stats.outputs_skipped += skipped
+                    if written:
+                        stats.frames_done += 1
+                    else:
+                        stats.frames_skipped += 1
                     completed_frames += 1
                     if progress:
                         progress(completed_frames, total_frames, msg)
+                else:
+                    file_completed = True
         except Exception as exc:  # noqa: BLE001 - report and continue
             stats.errors.append(f"{h5_path.name}: {exc}")
         else:
-            stats.files_done += 1
+            if file_completed:
+                stats.files_done += 1
 
     return stats

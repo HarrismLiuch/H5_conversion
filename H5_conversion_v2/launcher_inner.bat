@@ -20,50 +20,109 @@ echo === H5 Conversion launcher ===
 echo Log: %LOGFILE%
 echo.
 
+if not defined MPLCONFIGDIR set "MPLCONFIGDIR=%TEMP%\h5conv-matplotlib"
+if not exist "%MPLCONFIGDIR%" mkdir "%MPLCONFIGDIR%" >> "%LOGFILE%" 2>&1
+echo Matplotlib cache: %MPLCONFIGDIR% >> "%LOGFILE%"
+
 REM ---------------------------------------------------------------
-REM 1. Locate `uv`. We check the binary's actual filesystem path
-REM    first, because the installer's PATH update often does not
-REM    reach the current CMD session.
+REM 1. Locate `uv`. We check the most common install paths first;
+REM    if none of those have it, we install it ourselves with a
+REM    direct download from GitHub releases (no PowerShell, no
+REM    group-policy surprises).
 REM ---------------------------------------------------------------
+
+REM 1a. Search the standard install locations and the user's PATH.
 set "UV_EXE="
-set "UV_CANDIDATES=%USERPROFILE%\.local\bin\uv.exe;%LOCALAPPDATA%\uv\uv.exe;C:\Program Files\uv\uv.exe;C:\Program Files (x86)\uv\uv.exe"
-for %%P in ("%USERPROFILE%\.local\bin\uv.exe" "%LOCALAPPDATA%\uv\uv.exe" "C:\Program Files\uv\uv.exe" "C:\Program Files (x86)\uv\uv.exe") do (
+if defined H5CONV_UV_EXE (
+    if exist "%H5CONV_UV_EXE%" (
+        set "UV_EXE=%H5CONV_UV_EXE%"
+        echo Using H5CONV_UV_EXE: %H5CONV_UV_EXE% >> "%LOGFILE%"
+    ) else (
+        echo H5CONV_UV_EXE is set but does not exist: %H5CONV_UV_EXE% >> "%LOGFILE%"
+    )
+)
+for %%P in (
+    "%USERPROFILE%\.local\bin\uv.exe"
+    "%LOCALAPPDATA%\uv\uv.exe"
+    "C:\Program Files\uv\uv.exe"
+    "C:\Program Files (x86)\uv\uv.exe"
+    "C:\ProgramData\chocolatey\bin\uv.exe"
+    "C:\tools\uv\uv.exe"
+) do (
     if not defined UV_EXE (
-        if exist "%%~P" (
-            set "UV_EXE=%%~P"
+        if exist "%%~P" set "UV_EXE=%%~P"
+    )
+)
+
+REM 1b. If we still have nothing, ask the OS to find it. `where` walks
+REM     the current PATH; if it's there but in an unusual dir, we'll
+REM     pick it up. If `where` returns nothing, it sets UV_EXE to "".
+if not defined UV_EXE (
+    for /f "delims=" %%W in ('where uv 2^>nul') do (
+        if not defined UV_EXE set "UV_EXE=%%W"
+    )
+)
+
+REM 1c. If we still have nothing, install uv ourselves by downloading
+REM     the standalone binary from GitHub. This bypasses the PowerShell
+REM     installer entirely (which is blocked on many managed machines).
+if not defined UV_EXE (
+    echo uv was not found anywhere on the system. Installing it now...
+    echo uv was not found anywhere on the system. Installing it now. >> "%LOGFILE%"
+
+    REM Pick the right arch-specific download URL.
+    if /I "%PROCESSOR_ARCHITECTURE%"=="AMD64" (
+        set "UV_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-windows-msvc.zip"
+        set "UV_ARCH=msvc"
+    ) else if /I "%PROCESSOR_ARCHITECTURE%"=="ARM64" (
+        set "UV_URL=https://github.com/astral-sh/uv/releases/latest/download/uv-aarch64-pc-windows-msvc.zip"
+        set "UV_ARCH=msvc"
+    ) else (
+        echo Unsupported architecture: %PROCESSOR_ARCHITECTURE% >> "%LOGFILE%"
+        set "UV_URL="
+        set "UV_ARCH=unknown"
+    )
+
+    if defined UV_URL (
+        set "UV_DIR=%USERPROFILE%\.local\bin"
+        if not exist "!UV_DIR!" mkdir "!UV_DIR!" >> "%LOGFILE%" 2>&1
+        set "UV_ZIP=%TEMP%\uv_install.zip"
+        echo Downloading uv from !UV_URL! ... >> "%LOGFILE%"
+        REM Try curl first (Windows 10+ ships it); fall back to PowerShell
+        REM Invoke-WebRequest for older / stripped-down images.
+        curl --version >nul 2>&1
+        if not errorlevel 1 (
+            curl -fsSL -o "!UV_ZIP!" "!UV_URL!" >> "%LOGFILE%" 2>&1
         ) else (
-            echo   uv candidate not found: %%~P
+            echo curl not found, using PowerShell Invoke-WebRequest... >> "%LOGFILE%"
+            powershell -NoProfile -Command "Invoke-WebRequest -UseBasicParsing -Uri '!UV_URL!' -OutFile '!UV_ZIP!'" >> "%LOGFILE%" 2>&1
+        )
+        if errorlevel 1 (
+            echo Download failed. See %LOGFILE% for details. >> "%LOGFILE%"
+        ) else (
+            REM Unzip with PowerShell (no execution policy needed for
+            REM Expand-Archive, which is a built-in cmdlet).
+            echo Extracting uv... >> "%LOGFILE%"
+            powershell -NoProfile -Command "Expand-Archive -Force -Path '!UV_ZIP!' -DestinationPath '!UV_DIR!'" >> "%LOGFILE%" 2>&1
+            del "!UV_ZIP!" >nul 2>&1
+            if exist "!UV_DIR!\uv.exe" set "UV_EXE=!UV_DIR!\uv.exe"
         )
     )
 )
 
 if not defined UV_EXE (
     echo.
-    echo uv was not found on this system. Installing it now (one-time)...
-    echo uv was not found on this system. Installing it now. >> "%LOGFILE%"
-    powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex" >> "%LOGFILE%" 2>&1
-    if exist "%USERPROFILE%\.local\bin\uv.exe" set "UV_EXE=%USERPROFILE%\.local\bin\uv.exe"
-)
-
-if not defined UV_EXE (
-    echo.
     echo ===============================================================
-    echo   ERROR: uv is still not installed.
+    echo   ERROR: uv could not be found or installed.
     echo ===============================================================
     echo.
-    echo Could not find uv.exe in any of the standard locations:
-    for %%P in ("%USERPROFILE%\.local\bin\uv.exe" "%LOCALAPPDATA%\uv\uv.exe" "C:\Program Files\uv\uv.exe") do (
-        echo     %%~P
-    )
+    echo I searched the standard install paths and the current PATH,
+    echo then tried to download uv from GitHub releases. Both failed.
     echo.
-    echo Please open PowerShell and run:
-    echo     irm https://astral.sh/uv/install.ps1 ^| iex
+    echo See the full log for details: %LOGFILE%
     echo.
-    echo Then double-click launch_windows.vbs again.
-    echo.
-    echo Full installer log saved to: %LOGFILE%
-    echo --- Last 20 lines of the installer log: ---
-    powershell -Command "Get-Content '%LOGFILE%' -Tail 20"
+    echo --- Last 40 lines of the log: ---
+    powershell -NoProfile -Command "Get-Content '%LOGFILE%' -Tail 40"
     echo.
     echo Press any key to close this window...
     pause >nul
@@ -91,7 +150,7 @@ if errorlevel 1 (
     echo See the full output in: %LOGFILE%
     echo.
     echo --- Last 30 lines of the log: ---
-    powershell -Command "Get-Content '%LOGFILE%' -Tail 30"
+    powershell -NoProfile -Command "Get-Content '%LOGFILE%' -Tail 30"
     echo.
     echo Press any key to close this window...
     pause >nul
@@ -120,7 +179,7 @@ if %RC% NEQ 0 (
     echo See the full output in: %LOGFILE%
     echo.
     echo --- Last 30 lines of the log: ---
-    powershell -Command "Get-Content '%LOGFILE%' -Tail 30"
+    powershell -NoProfile -Command "Get-Content '%LOGFILE%' -Tail 30"
 ) else (
     echo The GUI closed normally. You can re-run this launcher any time.
 )
